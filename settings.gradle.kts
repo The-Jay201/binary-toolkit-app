@@ -13,5 +13,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BinaryToolkitApp"
+rootProject.name = "BinaryToolkit"
 include(":app")
+
