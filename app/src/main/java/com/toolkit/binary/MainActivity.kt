@@ -1,166 +1,311 @@
-package com.toolkit.binary
+package com.academic.binarytoolkit
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
+import kotlinx.coroutines.withContext
+import java.io.InputStream
+import java.util.regex.Pattern
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
-                CyberpunkScreen()
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                BinaryToolkitScreen()
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CyberpunkScreen() {
-    val coroutineScope = rememberCoroutineScope()
-    var logText by remember { mutableStateOf("🤖 System Idle. Waiting for execution command...") }
-    var isScanning by remember { mutableStateOf(false) }
-    var progressValue by remember { mutableFloatStateOf(0.0f) }
+fun BinaryToolkitScreen() {
+    val context = LocalContext.current
+    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedFileName by remember { mutableStateOf("Belum ada berkas dipilih") }
+    var searchQuery by remember { mutableStateOf("") }
+    
+    var isProcessing by remember { mutableStateOf(false) }
+    var logOutput by remember { mutableStateOf("[>] Aplikasi Siap. Pilih berkas .so/.sh untuk memulai analisa.\n") }
+    var progressPercent by remember { mutableStateOf(0f) }
+    var currentKeyProgress by remember { mutableStateOf(0) }
 
-    val targetFile = "/sdcard/Download/libPutri.so"
+    val scope = rememberCoroutineScope()
+    var currentJob by remember { mutableStateOf<Job?>(null) }
+    val scrollState = rememberScrollState()
+
+    // Auto scroll log ke bawah
+    LaunchedEffect(logOutput) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
+
+    // Launcher untuk File Picker Android (Mendukung SAF)
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            selectedFileUri = it
+            selectedFileName = it.lastPathSegment ?: "berkas_biner.so"
+            logOutput += "[+] Berkas berhasil dimuat: $selectedFileName\n"
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D0E15))
+            .background(Color(0xFF121212))
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Header
         Text(
-            text = "BINARY TOOLKIT PRO",
-            color = Color(0xFF00FFCC),
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
+            text = "ACADEMIC BINARY ANALYSIS TOOLKIT",
+            color = Color.Cyan,
+            fontSize = 18.sp,
             fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(vertical = 16.dp)
+            modifier = Modifier.padding(vertical = 4.dp)
         )
 
-        // Target Info Box
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, Color(0xFFFF0055), RoundedCornerShape(4.dp))
-                .background(Color(0xFF161925))
-                .padding(12.dp)
+        // 1. Seksi Pemilih Berkas (File Picker)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
         ) {
-            Column {
-                Text("TARGET BINARY BLOB :", color = Color.Gray, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(targetFile, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = selectedFileName,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan)
+                ) {
+                    Text("PILIH BERKAS", color = Color.Black)
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        // 2. Input untuk Pencarian Teks / Fitur Grep
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("Kata Kunci / Pattern Grep") },
+            modifier = Modifier.fillMaxWidth(),
+            colors = TextFieldDefaults.outlinedTextFieldColors(
+                focusedBorderColor = Color.Cyan,
+                unfocusedBorderColor = Color.Gray
+            )
+        )
 
-        // Console Log Output
+        // 3. Tombol Grid Operasi/Fitur Proyek
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Fitur 1: Brute-Force XOR Scanner
+            Button(
+                onClick = {
+                    if (isProcessing) {
+                        currentJob?.cancel()
+                        isProcessing = false
+                        logOutput += "[!] Analisa dibatalkan.\n"
+                    } else {
+                        selectedFileUri?.let { uri ->
+                            isProcessing = true
+                            logOutput = "[*] Menjalankan Brute-Force Dekripsi XOR (0-255)...\n"
+                            currentJob = scope.launch {
+                                val inputStream = context.contentResolver.openInputStream(uri)
+                                val data = inputStream?.readBytes() ?: byteArrayOf()
+                                runXorAnalysis(data, { logOutput += it }, { p, k -> progressPercent = p; currentKeyProgress = k }) {
+                                    isProcessing = false
+                                }
+                            }
+                        } ?: run { logOutput += "[-] Error: Pilih berkas terlebih dahulu!\n" }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B0000))
+            ) {
+                Text(if (isProcessing) "STOP" else "XOR BRUTEFORCE", fontSize = 11.sp)
+            }
+
+            // Fitur 2: Pencarian Grep Konteks
+            Button(
+                onClick = {
+                    selectedFileUri?.let { uri ->
+                        if (searchQuery.isBlank()) {
+                            logOutput += "[-] Masukkan kata kunci pencarian di kolom!\n"
+                            return@Button
+                        }
+                        logOutput += "[*] Mencari string konteks untuk: '$searchQuery'...\n"
+                        scope.launch {
+                            val inputStream = context.contentResolver.openInputStream(uri)
+                            val data = inputStream?.readBytes() ?: byteArrayOf()
+                            runGrepAnalysis(data, searchQuery) { logOutput += it }
+                        }
+                    } ?: run { logOutput += "[-] Error: Pilih berkas terlebih dahulu!\n" }
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008B8B))
+            ) {
+                Text("CARI STRING (GREP)", fontSize = 11.sp)
+            }
+        }
+
+        // 4. Terminal Hasil Output Simulasi Analisa
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .border(1.dp, Color(0xFF00FFCC), RoundedCornerShape(4.dp))
-                .background(Color(0xFF05070B))
+                .background(Color(0xFF000000), shape = RoundedCornerShape(8.dp))
                 .padding(12.dp)
         ) {
-            Text(
-                text = logText,
-                color = Color(0xFF33FF33),
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Progress Indicator - FIX: Menggunakan Float murni untuk Material 1.1.2
-        if (isScanning) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                LinearProgressIndicator(
-                    progress = progressValue,
-                    modifier = Modifier.fillMaxWidth().height(8.dp),
-                    color = Color(0xFF00FFCC),
-                    trackColor = Color(0xFF161925)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+            ) {
                 Text(
-                    text = "Scanning: ${(progressValue * 100).toInt()}%",
-                    color = Color(0xFF00FFCC),
-                    fontSize = 12.sp,
+                    text = logOutput,
+                    color = Color(0xFF00FF00),
                     fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.align(Alignment.End)
+                    fontSize = 12.sp
                 )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
 
-        // Action Button
-        Button(
-            onClick = {
-                if (!isScanning) {
-                    isScanning = true
-                    progressValue = 0.0f
-                    logText = "[*] Initializing memory scanner...\n[*] Target: $targetFile"
-                    
-                    coroutineScope.launch {
-                        val file = File(targetFile)
-                        delay(1000)
-                        
-                        if (!file.exists()) {
-                            logText += "\n\n❌ ERROR: File 'libPutri.so' tidak ditemukan di folder Download!\nSilakan taruh filenya terlebih dahulu woi."
-                            isScanning = false
-                        } else {
-                            logText += "\n[*] File detected (${file.length()} bytes). Starting byte decryption..."
-                            
-                            // Progress Simulation Loop
-                            for (i in 1..10) {
-                                delay(300)
-                                progressValue = i / 10.0f
-                            }
-                            
-                            logText += "\n\n[✔] SCAN COMPLETE!"
-                            logText += "\n[+] XOR Key Found: 0x5A"
-                            logText += "\n[+] Decrypted URL: https://api.premium-tools.live/v2/"
-                            isScanning = false
-                        }
+                if (isProcessing) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LinearProgressIndicator(
+                            progress = progressPercent,
+                            modifier = Modifier.weight(1f).height(10.dp),
+                            color = Color.Cyan,
+                            trackColor = Color.DarkGray
+                        )
+                        Text(
+                            text = " ${(progressPercent * 100).toInt()}% ($currentKeyProgress/255)",
+                            color = Color.Cyan,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
                     }
                 }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-            shape = RoundedCornerShape(4.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isScanning) Color.DarkGray else Color(0xFFFF0055)
-            ),
-            enabled = !isScanning
-        ) {
-            Text(
-                text = if (isScanning) "SCANNING..." else "START SCANNING",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
+            }
+        }
+    }
+}
+
+// Logika Latar Belakang: Analisa Brute-Force Eksperimental XOR
+suspend fun runXorAnalysis(
+    data: ByteArray,
+    onLog: (String) -> Unit,
+    onProgress: (Float, Int) -> Unit,
+    onFinished: () -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        val urlPattern = Pattern.compile("https?://[a-zA-Z0-9.\\-_~:/?#\\[\\]@!$&'()*+,;=%]+")
+        var found = false
+
+        for (key in 0..255) {
+            val progress = key.toFloat() / 255f
+            withContext(Dispatchers.Main) { onProgress(progress, key) }
+
+            val xorData = ByteArray(data.size)
+            for (i in data.indices) {
+                xorData[i] = (data[i].toInt() xor key).toByte()
+            }
+
+            // Ekstraksi teks string format standar & wide characters
+            val decodedStr = String(xorData, Charsets.ISO_8859_1)
+            val matcher = urlPattern.matcher(decodedStr)
+            
+            val foundUrls = mutableSetOf<String>()
+            while (matcher.find()) { foundUrls.add(matcher.group()) }
+
+            if (foundUrls.isNotEmpty()) {
+                found = true
+                withContext(Dispatchers.Main) {
+                    onLog("🔑 [KEY DETECTED: 0x${Integer.toHexString(key).uppercase()} ($key)]\n")
+                    foundUrls.forEach { onLog("   🔗 $it\n") }
+                }
+            }
+            delay(4) // Menjaga stabilitas alokasi memori
+        }
+        withContext(Dispatchers.Main) {
+            onLog(if (found) "[✔] Pemindaian selesai.\n" else "[-] Tidak ditemukan indikasi enkripsi tunggal.\n")
+            onFinished()
+        }
+    }
+}
+
+// Logika Latar Belakang: Fitur Grep String Konteks Lokal
+suspend fun runGrepAnalysis(
+    data: ByteArray,
+    query: String,
+    onLog: (String) -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        // Ekstraksi karakter readable minimum sepanjang 4 karakter
+        val stringPattern = Pattern.compile("[a-zA-Z0-9\\/:\\.\\s\\(\\)\\[\\]\\&=\\%\\?\\-]{4,}")
+        val contentStr = String(data, Charsets.ISO_8859_1)
+        val matcher = stringPattern.matcher(contentStr)
+
+        val extractedStrings = mutableListOf<String>()
+        while (matcher.find()) {
+            extractedStrings.add(matcher.group().trim())
+        }
+
+        var matchCount = 0
+        for (idx in extractedStrings.indices) {
+            if (extractedStrings[idx].contains(query, ignoreCase = true)) {
+                matchCount++
+                val start = maxOf(0, idx - 3)
+                val end = minOf(extractedStrings.size - 1, idx + 3)
+
+                withContext(Dispatchers.Main) {
+                    onLog("--- MATCH FOUND (Index: $idx) ---\n")
+                    for (cIdx in start..end) {
+                        if (cIdx == idx) {
+                            onLog(" 👉 [MATCH] ${extractedStrings[cIdx]}\n")
+                        } else {
+                            onLog("    ${extractedStrings[cIdx]}\n")
+                        }
+                    }
+                    onLog("---------------------------------\n")
+                }
+            }
+        }
+        withContext(Dispatchers.Main) {
+            if (matchCount == 0) onLog("[-] Karakter '$query' tidak ditemukan dalam struktur biner.\n")
+            else onLog("[✔] Ditemukan $matchCount kecocokan string.\n")
         }
     }
 }
