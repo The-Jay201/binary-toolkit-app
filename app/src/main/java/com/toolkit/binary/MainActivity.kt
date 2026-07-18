@@ -93,11 +93,11 @@ fun CyberpunkScreen() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Progress Indicator Flipped to Material3 Standard
+        // Progress Indicator - FIX: Menggunakan Float murni untuk Material 1.1.2
         if (isScanning) {
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                 LinearProgressIndicator(
-                    progress = { progressValue },
+                    progress = progressValue,
                     modifier = Modifier.fillMaxWidth().height(8.dp),
                     color = Color(0xFF00FFCC),
                     trackColor = Color(0xFF161925)
