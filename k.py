@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 URL_TARGET = 'https://migoreng.my.id/api/v1/ml'
-JUMLAH_THREAD = 5
-MAKSIMAL_REQUEST = 10
+JUMLAH_THREAD = 200
+MAKSIMAL_REQUEST = 20000
 LOG_FILE = "key.txt"
 
 # Lock untuk menulis aman dari multi-thread
